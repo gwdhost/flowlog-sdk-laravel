@@ -1,4 +1,5 @@
 {
+    "version": "0.1.1",
     "name": "flowlog/flowlog-laravel",
     "description": "Laravel SDK for Flowlog - Async logging with automatic context extraction",
     "type": "library",

@@ -33,6 +33,11 @@ class HttpListener
      */
     protected function logRequest(): void
     {
+        // Don't log console/artisan commands
+        if (app()->runningInConsole()) {
+            return;
+        }
+
         $request = request();
 
         if (! $request) {
@@ -99,11 +104,47 @@ class HttpListener
      */
     protected function getStartTime(Request $request): ?float
     {
-        if (! isset($this->startTimes[$request->fingerprint()])) {
-            $this->startTimes[$request->fingerprint()] = defined('LARAVEL_START') ? LARAVEL_START : microtime(true);
+        $requestId = $this->getRequestIdentifier($request);
+        
+        if (! isset($this->startTimes[$requestId])) {
+            $this->startTimes[$requestId] = defined('LARAVEL_START') ? LARAVEL_START : microtime(true);
         }
 
-        return $this->startTimes[$request->fingerprint()] ?? null;
+        return $this->startTimes[$requestId] ?? null;
+    }
+
+    /**
+     * Get a unique identifier for the request.
+     */
+    protected function getRequestIdentifier(Request $request): string
+    {
+        // First, try to get request ID from headers or attributes
+        $requestId = $request->header('X-Request-ID') 
+            ?? $request->header('X-Request-Id')
+            ?? $request->attributes->get('_request_id');
+        
+        if ($requestId) {
+            return (string) $requestId;
+        }
+        
+        // Try to use fingerprint if route is available
+        try {
+            if ($request->route()) {
+                return $request->fingerprint();
+            }
+        } catch (\RuntimeException $e) {
+            // Route unavailable, fall through to fallback
+        } catch (\Exception $e) {
+            // Other exceptions, fall through to fallback
+        }
+        
+        // Fallback: use method + path + IP + timestamp as identifier
+        return md5(
+            $request->method() . 
+            $request->path() . 
+            $request->ip() . 
+            ($request->server('REQUEST_TIME_FLOAT') ?? microtime(true))
+        );
     }
 
     /**
