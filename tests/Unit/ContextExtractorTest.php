@@ -1,0 +1,58 @@
+<?php
+
+namespace Flowlog\FlowlogLaravel\Tests\Unit;
+
+use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Flowlog\FlowlogLaravel\Tests\TestCase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+it('extracts request context', function () {
+    $request = Request::create('/test', 'GET', [], [], [], [
+        'HTTP_X_REQUEST_ID' => 'req-123',
+        'HTTP_X_TRACE_ID' => 'trace-456',
+    ]);
+
+    app()->instance('request', $request);
+
+    $extractor = new ContextExtractor();
+    $context = $extractor->extract();
+
+    expect($context)->toHaveKey('http_method')
+        ->and($context['http_method'])->toBe('GET')
+        ->and($context)->toHaveKey('http_url')
+        ->and($context)->toHaveKey('request_id')
+        ->and($context['request_id'])->toBe('req-123')
+        ->and($context)->toHaveKey('trace_id')
+        ->and($context['trace_id'])->toBe('trace-456');
+});
+
+it('generates uuid for missing request id', function () {
+    $request = Request::create('/test', 'GET');
+    app()->instance('request', $request);
+
+    $extractor = new ContextExtractor();
+    $context = $extractor->extract();
+
+    expect($context)->toHaveKey('request_id')
+        ->and($context['request_id'])->toBeString()
+        ->and(strlen($context['request_id']))->toBeGreaterThan(0);
+});
+
+it('extracts exception context', function () {
+    $exception = new \Exception('Test exception', 500);
+    $exception->file = '/test/file.php';
+    $exception->line = 42;
+
+    $extractor = new ContextExtractor();
+    $context = $extractor->extractExceptionContext($exception);
+
+    expect($context)->toHaveKey('exception_class')
+        ->and($context['exception_class'])->toBe(\Exception::class)
+        ->and($context)->toHaveKey('exception_message')
+        ->and($context['exception_message'])->toBe('Test exception')
+        ->and($context)->toHaveKey('exception_file')
+        ->and($context)->toHaveKey('exception_line')
+        ->and($context['exception_line'])->toBe(42);
+});
+
