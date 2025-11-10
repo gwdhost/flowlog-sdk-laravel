@@ -3,6 +3,7 @@
 namespace Flowlog\FlowlogLaravel\Listeners;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,29 +19,41 @@ class HttpListener
     }
 
     /**
+     * Handle the RequestHandled event.
+     * This is the proper Laravel way to listen to HTTP requests in versions 10, 11, and 12.
+     */
+    public function handle(RequestHandled $event): void
+    {
+        $this->logRequest($event->request, $event->response);
+    }
+
+    /**
      * Register HTTP event listeners.
+     * This method is kept for backward compatibility but is no longer needed
+     * when using the handle() method with RequestHandled event.
      */
     public function register(): void
     {
-        // Listen to request events
-        app()->terminating(function () {
-            $this->logRequest();
-        });
+        // This method is deprecated. Use Event::listen(RequestHandled::class, HttpListener::class)
+        // in the service provider instead, or let Laravel auto-discover the listener.
     }
 
     /**
      * Log HTTP request and response.
      */
-    protected function logRequest(): void
+    protected function logRequest(Request $request, ?Response $response = null): void
     {
         // Don't log console/artisan commands
         if (app()->runningInConsole()) {
             return;
         }
 
-        $request = request();
+        if (! $request || $request->method() == 'OPTIONS') {
+            return;
+        }
 
-        if (! $request) {
+        // If it is not a route request, return
+        if (! $request->route()) {
             return;
         }
 
@@ -53,12 +66,14 @@ class HttpListener
         $executionTime = $startTime ? microtime(true) - $startTime : null;
 
         // Get status code from response if available
-        // In terminating callback, we can't reliably get the response object
-        // So we'll just log without status code or try to get it from the request
         $statusCode = null;
         try {
-            // Try to get response status from request attributes (set by middleware)
-            $statusCode = $request->attributes->get('_response_status') ?? $request->getStatusCode();
+            if ($response && method_exists($response, 'getStatusCode')) {
+                $statusCode = $response->getStatusCode();
+            } else {
+                // Fallback: try to get from request attributes (set by middleware)
+                $statusCode = $request->attributes->get('_response_status');
+            }
         } catch (\Exception $e) {
             // Status code not available
         }

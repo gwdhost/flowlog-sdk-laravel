@@ -7,7 +7,8 @@ use Flowlog\FlowlogLaravel\Listeners\HttpListener;
 use Flowlog\FlowlogLaravel\Listeners\JobListener;
 use Flowlog\FlowlogLaravel\Listeners\QueryListener;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Log\LogManager;
+use Illuminate\Foundation\Http\Events\RequestHandled;
+use Monolog\Logger;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -30,8 +31,11 @@ class FlowlogServiceProvider extends ServiceProvider
         $this->app->singleton(Flowlog::class, function ($app) {
             return new Flowlog();
         });
-    }
 
+        // Register custom log channel
+        $this->registerLogChannel();
+    }
+    
     /**
      * Bootstrap services.
      */
@@ -41,9 +45,6 @@ class FlowlogServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/flowlog.php' => config_path('flowlog.php'),
         ], 'flowlog-config');
-
-        // Register custom log channel
-        $this->registerLogChannel();
 
         // Register event listeners
         $this->registerEventListeners();
@@ -58,18 +59,22 @@ class FlowlogServiceProvider extends ServiceProvider
             return; // Don't register if API key is not configured
         }
 
-        $this->app->make(LogManager::class)->extend('flowlog', function ($app, $config) {
-            return new \Monolog\Logger('flowlog', [
-                new FlowlogHandler(
-                    apiUrl: config('flowlog.api_url'),
-                    apiKey: config('flowlog.api_key'),
-                    service: config('flowlog.service'),
-                    env: config('flowlog.env'),
-                    batchSize: config('flowlog.batch.size', 50),
-                    batchInterval: config('flowlog.batch.interval', 5),
-                    maxBatchSizeBytes: config('flowlog.batch.max_size_bytes', 64 * 1024)
-                ),
-            ]);
+        $this->app->extend('log', function ($manager, $app) {
+            $manager->extend('flowlog', function ($app, $config) {
+                return new Logger('flowlog', [
+                    new FlowlogHandler(
+                        apiUrl: config('flowlog.api_url'),
+                        apiKey: config('flowlog.api_key'),
+                        service: config('flowlog.service', 'laravel'),
+                        env: config('flowlog.env', 'local'),
+                        batchSize: config('flowlog.batch.size', 50),
+                        batchInterval: config('flowlog.batch.interval', 5),
+                        maxBatchSizeBytes: config('flowlog.batch.max_size_bytes', 64 * 1024)
+                    ),
+                ]);
+            });
+
+            return $manager;
         });
     }
 
@@ -78,22 +83,24 @@ class FlowlogServiceProvider extends ServiceProvider
      */
     protected function registerEventListeners(): void
     {
-        // Query logging
-        if (config('flowlog.features.query_logging', false)) {
-            Event::listen(QueryExecuted::class, QueryListener::class);
-        }
+        $this->app->booted(function () {    
+            // Query logging
+            if (config('flowlog.features.query_logging', false)) {
+                Event::listen(QueryExecuted::class, [QueryListener::class, 'handle']);
+            }
 
-        // HTTP logging
-        if (config('flowlog.features.http_logging', false)) {
-            $this->app->singleton(HttpListener::class);
-            $this->app->make(HttpListener::class)->register();
-        }
+            // HTTP logging - Use RequestHandled event (proper Laravel way for versions 10, 11, and 12)
+            if (config('flowlog.features.http_logging', false)) {
+                Event::listen(RequestHandled::class, [HttpListener::class, 'handle']);
+            }
+        });
 
         // Job/Queue logging (enabled by default)
         if (config('flowlog.features.job_logging', true)) {
-            Event::listen(JobProcessing::class, [JobListener::class, 'handleProcessing']);
-            Event::listen(JobProcessed::class, [JobListener::class, 'handleProcessed']);
-            Event::listen(JobFailed::class, [JobListener::class, 'handleFailed']);
+            $jobListener = $this->app->make(JobListener::class);
+            Event::listen(JobProcessing::class, [$jobListener, 'handleProcessing']);
+            Event::listen(JobProcessed::class, [$jobListener, 'handleProcessed']);
+            Event::listen(JobFailed::class, [$jobListener, 'handleFailed']);
         }
 
         // Exception reporting

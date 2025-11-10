@@ -8,6 +8,7 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class JobListener
 {
@@ -24,24 +25,30 @@ class JobListener
      */
     public function handleProcessing(JobProcessing $event): void
     {
+        $jobClass = $this->getJobClass($event->job);
+        
         // Check if job should be excluded
-        if ($this->shouldExcludeJob($event->job)) {
+        if ($this->shouldExcludeJob($event->job, $jobClass)) {
             return;
         }
 
-        $this->jobStartTimes[$event->job->getJobId()] = microtime(true);
+        $jobId = $this->getJobId($event->job);
+        $queue = $this->getQueue($event->job);
+        $attempts = $this->getAttempts($event->job);
+
+        $this->jobStartTimes[$jobId] = microtime(true);
 
         $context = $this->contextExtractor->extractJobContext(
-            get_class($event->job),
-            $event->job->getQueue(),
-            $event->job->attempts()
+            $jobClass,
+            $queue,
+            $attempts
         );
 
         $message = sprintf(
             'Job processing: %s on queue %s (attempt %d)',
-            $this->getJobName($event->job),
-            $event->job->getQueue(),
-            $event->job->attempts()
+            $this->getJobName($event->job, $jobClass),
+            $queue,
+            $attempts
         );
 
         Log::channel('flowlog')->info($message, $context);
@@ -52,28 +59,33 @@ class JobListener
      */
     public function handleProcessed(JobProcessed $event): void
     {
+        $jobClass = $this->getJobClass($event->job);
+        
         // Check if job should be excluded
-        if ($this->shouldExcludeJob($event->job)) {
+        if ($this->shouldExcludeJob($event->job, $jobClass)) {
             return;
         }
 
-        $jobId = $event->job->getJobId();
+        $jobId = $this->getJobId($event->job);
+        $queue = $this->getQueue($event->job);
+        $attempts = $this->getAttempts($event->job);
+        
         $startTime = $this->jobStartTimes[$jobId] ?? null;
         $executionTime = $startTime ? microtime(true) - $startTime : null;
 
         unset($this->jobStartTimes[$jobId]);
 
         $context = $this->contextExtractor->extractJobContext(
-            get_class($event->job),
-            $event->job->getQueue(),
-            $event->job->attempts(),
+            $jobClass,
+            $queue,
+            $attempts,
             $executionTime
         );
 
         $message = sprintf(
             'Job completed: %s on queue %s',
-            $this->getJobName($event->job),
-            $event->job->getQueue()
+            $this->getJobName($event->job, $jobClass),
+            $queue
         );
 
         Log::channel('flowlog')->info($message, $context);
@@ -84,21 +96,26 @@ class JobListener
      */
     public function handleFailed(JobFailed $event): void
     {
+        $jobClass = $this->getJobClass($event->job);
+        
         // Check if job should be excluded
-        if ($this->shouldExcludeJob($event->job)) {
+        if ($this->shouldExcludeJob($event->job, $jobClass)) {
             return;
         }
 
-        $jobId = $event->job->getJobId();
+        $jobId = $this->getJobId($event->job);
+        $queue = $this->getQueue($event->job);
+        $attempts = $this->getAttempts($event->job);
+        
         $startTime = $this->jobStartTimes[$jobId] ?? null;
         $executionTime = $startTime ? microtime(true) - $startTime : null;
 
         unset($this->jobStartTimes[$jobId]);
 
         $context = $this->contextExtractor->extractJobContext(
-            get_class($event->job),
-            $event->job->getQueue(),
-            $event->job->attempts(),
+            $jobClass,
+            $queue,
+            $attempts,
             $executionTime
         );
 
@@ -110,32 +127,114 @@ class JobListener
 
         $message = sprintf(
             'Job failed: %s on queue %s (attempt %d)',
-            $this->getJobName($event->job),
-            $event->job->getQueue(),
-            $event->job->attempts()
+            $this->getJobName($event->job, $jobClass),
+            $queue,
+            $attempts
         );
 
         Log::channel('flowlog')->error($message, $context);
     }
 
     /**
+     * Get the actual job class name from the queue job instance.
+     */
+    protected function getJobClass($queueJob): string
+    {
+        // Try resolveName() first (Laravel 5.5+)
+        if (method_exists($queueJob, 'resolveName')) {
+            return $queueJob->resolveName();
+        }
+
+        // Fallback: try to get from payload
+        if (method_exists($queueJob, 'payload')) {
+            $payload = $queueJob->payload();
+            if (isset($payload['displayName'])) {
+                return $payload['displayName'];
+            }
+            if (isset($payload['job'])) {
+                return $payload['job'];
+            }
+        }
+
+        // Last resort: use the queue job class itself
+        return get_class($queueJob);
+    }
+
+    /**
+     * Get job ID from queue job instance.
+     */
+    protected function getJobId($queueJob): string
+    {
+        if (method_exists($queueJob, 'getJobId')) {
+            return $queueJob->getJobId();
+        }
+
+        // Fallback: use a combination of queue and timestamp
+        return md5(
+            $this->getQueue($queueJob) .
+            (method_exists($queueJob, 'payload') ? serialize($queueJob->payload()) : '') .
+            microtime(true)
+        );
+    }
+
+    /**
+     * Get queue name from queue job instance.
+     */
+    protected function getQueue($queueJob): string
+    {
+        if (method_exists($queueJob, 'getQueue')) {
+            return $queueJob->getQueue();
+        }
+
+        // Fallback: try to get from connection
+        if (method_exists($queueJob, 'getConnectionName')) {
+            return $queueJob->getConnectionName() ?? 'default';
+        }
+
+        return 'default';
+    }
+
+    /**
+     * Get attempt count from queue job instance.
+     */
+    protected function getAttempts($queueJob): int
+    {
+        if (method_exists($queueJob, 'attempts')) {
+            return $queueJob->attempts();
+        }
+
+        // Fallback: try to get from payload
+        if (method_exists($queueJob, 'payload')) {
+            $payload = $queueJob->payload();
+            return $payload['attempts'] ?? 1;
+        }
+
+        return 1;
+    }
+
+    /**
      * Check if job should be excluded from logging.
      */
-    protected function shouldExcludeJob($job): bool
+    protected function shouldExcludeJob($queueJob, string $jobClass): bool
     {
-        if ($job instanceof SendLogsJob) {
+        // Check if it's the SendLogsJob
+        if ($jobClass === SendLogsJob::class || is_subclass_of($jobClass, SendLogsJob::class)) {
             return true;
         }
 
-        if (strpos(get_class($job), 'Illuminate\\Queue\\Jobs') !== false) {
+        // Exclude Laravel internal queue jobs
+        if (Str::contains($jobClass, 'Illuminate\\Queue\\Jobs') !== false) {
             return true;
         }
-        if (strpos(get_class($job), 'Laravel\\Scout\\Jobs') !== false) {
+        if (Str::contains($jobClass, 'Laravel\\Scout\\Jobs') !== false) {
+            return true;
+        }
+        if (Str::contains($jobClass, 'Laravel\\Telescope\\Jobs') !== false) {
             return true;
         }
 
+        // Check configured exclusions
         $excludeJobs = config('flowlog.jobs.exclude_jobs', []);
-        $jobClass = get_class($job);
 
         foreach ($excludeJobs as $excludedClass) {
             if ($jobClass === $excludedClass || is_subclass_of($jobClass, $excludedClass)) {
@@ -149,17 +248,15 @@ class JobListener
     /**
      * Get job name for logging.
      */
-    protected function getJobName($job): string
+    protected function getJobName($queueJob, string $jobClass): string
     {
-        if (method_exists($job, 'displayName')) {
-            return $job->displayName();
+        // Try displayName() method
+        if (method_exists($queueJob, 'displayName')) {
+            return $queueJob->displayName();
         }
-
-        $jobClass = get_class($job);
 
         // Extract class name without namespace
         $parts = explode('\\', $jobClass);
-
         return end($parts);
     }
 }

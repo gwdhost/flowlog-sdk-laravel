@@ -36,6 +36,13 @@ return [
 
     'env' => env('FLOWLOG_ENV', env('APP_ENV', 'production')),
 
+    /**
+     * Fallback log channel
+     * 
+     * @var string
+     */
+    'fallback_log_channel' => env('FLOWLOG_FALLBACK_LOG_CHANNEL', 'single'),
+
     /*
     |--------------------------------------------------------------------------
     | Batch Configuration
@@ -153,6 +160,7 @@ return [
         'queue' => env('FLOWLOG_QUEUE_NAME', 'default'),
         'tries' => env('FLOWLOG_QUEUE_TRIES', 3),
         'backoff' => env('FLOWLOG_QUEUE_BACKOFF', [1, 5, 10]), // seconds
+        'debounce_delay' => env('FLOWLOG_QUEUE_DEBOUNCE_DELAY', 3), // seconds to wait before sending
     ],
 ];
 

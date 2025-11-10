@@ -162,6 +162,10 @@ class FlowlogHandler extends AbstractHandler
         $this->lastFlushTime = time();
 
         try {
+            // Accumulate logs in cache first
+            SendLogsJob::accumulateLogs($logs);
+            
+            // Dispatch the job (it will be unique and delayed, merging with cache on execution)
             SendLogsJob::dispatch($logs, $this->apiUrl, $this->apiKey);
         } catch (\Exception $e) {
             // If queue fails, try to log to Laravel's default logger
