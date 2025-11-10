@@ -1,15 +1,26 @@
 # Flowlog Laravel SDK
 
-Laravel SDK for Flowlog - Async logging with automatic context extraction, exception reporting, and configurable event logging.
+Laravel SDK for Flowlog - Async logging with automatic context
+extraction, exception reporting, and configurable event logging.
+
+## Requirements
+
+- PHP 8.2 or higher
+- Laravel 10, 11, or 12
 
 ## Features
 
-- 🔄 **Async Logging**: Logs are batched and sent asynchronously via Laravel queues
-- 🎯 **Automatic Context Extraction**: Automatically extracts user, request, route, and trace information
-- 🚨 **Exception Reporting**: Automatically reports exceptions with full context
-- 📊 **Query Logging**: Log slow and failed database queries (configurable)
+- 🔄 **Async Logging**: Logs are batched and sent asynchronously via
+  Laravel queues
+- 🎯 **Automatic Context Extraction**: Automatically extracts user,
+  request, route, and trace information
+- 🚨 **Exception Reporting**: Automatically reports exceptions with
+  full context
+- 📊 **Query Logging**: Log slow and failed database queries
+  (configurable)
 - 🌐 **HTTP Logging**: Log HTTP requests and responses (configurable)
-- ⚙️ **Job/Queue Logging**: Log job processing, completion, and failures (enabled by default)
+- ⚙️ **Job/Queue Logging**: Log job processing, completion, and
+  failures (enabled by default)
 - 🎛️ **Fully Configurable**: Enable/disable features via config file
 
 ## Installation
@@ -47,9 +58,9 @@ Edit `config/logging.php` and add the Flowlog channel to your stack:
         'channels' => ['daily', 'flowlog'], // Add 'flowlog' here
         'ignore_exceptions' => false,
     ],
-    
+
     // ... other channels
-    
+
     'flowlog' => [
         'driver' => 'flowlog',
     ],
@@ -58,25 +69,49 @@ Edit `config/logging.php` and add the Flowlog channel to your stack:
 
 ### 5. (Optional) Add Middleware for Iteration/Trace IDs
 
-If you want automatic iteration key and trace ID generation per request, add the middleware to `bootstrap/app.php`:
+If you want automatic iteration key and trace ID generation per
+request, register the middleware based on your Laravel version:
+
+#### Laravel 11 and 12
+
+Add the middleware to `bootstrap/app.php`:
 
 ```php
 ->withMiddleware(function (Middleware $middleware) {
     $middleware->web(append: [
         \Flowlog\FlowlogLaravel\Middleware\FlowlogMiddleware::class,
     ]);
-    
+
     $middleware->api(append: [
         \Flowlog\FlowlogLaravel\Middleware\FlowlogMiddleware::class,
     ]);
 })
 ```
 
+#### Laravel 10
+
+Add the middleware to `app/Http/Kernel.php`:
+
+```php
+protected $middlewareGroups = [
+    'web' => [
+        // ... existing middleware
+        \Flowlog\FlowlogLaravel\Middleware\FlowlogMiddleware::class,
+    ],
+
+    'api' => [
+        // ... existing middleware
+        \Flowlog\FlowlogLaravel\Middleware\FlowlogMiddleware::class,
+    ],
+];
+```
+
 ## Usage
 
 ### Basic Logging
 
-Use Laravel's standard logging methods - they will automatically be sent to Flowlog if the channel is in your stack:
+Use Laravel's standard logging methods - they will automatically be
+sent to Flowlog if the channel is in your stack:
 
 ```php
 use Illuminate\Support\Facades\Log;
@@ -199,15 +234,18 @@ The SDK automatically extracts the following context:
 
 - **User ID**: From authenticated user (`auth()->id()`)
 - **Request ID**: From `X-Request-ID` header or generated UUID
-- **Trace ID**: From `X-Trace-Id` header or generated UUID (if middleware is used)
-- **Iteration Key**: From `X-Iteration-Key` header or request context (if middleware is used)
+- **Trace ID**: From `X-Trace-Id` header or generated UUID (if
+  middleware is used)
+- **Iteration Key**: From `X-Iteration-Key` header or request context
+  (if middleware is used)
 - **Route Information**: Route name, action, URI, parameters
 - **HTTP Information**: Method, URL, path, IP, user agent
 - **Session ID**: If session is started
 
 ## Queue Configuration
 
-Logs are sent asynchronously via Laravel queues. Configure in `config/flowlog.php`:
+Logs are sent asynchronously via Laravel queues. Configure in
+`config/flowlog.php`:
 
 ```php
 'queue' => [
@@ -226,7 +264,9 @@ php artisan queue:work
 
 ## Testing
 
-When running tests, the Flowlog channel will be automatically disabled if the API key is not set. You can also mock the Flowlog facade in tests:
+When running tests, the Flowlog channel will be automatically disabled
+if the API key is not set. You can also mock the Flowlog facade in
+tests:
 
 ```php
 use Flowlog\FlowlogLaravel\Facades\Flowlog;
@@ -239,4 +279,3 @@ Flowlog::shouldReceive('info')
 ## License
 
 MIT
-

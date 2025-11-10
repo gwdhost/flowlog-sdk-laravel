@@ -1,5 +1,5 @@
 {
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "flowlog/flowlog-laravel",
     "description": "Laravel SDK for Flowlog - Async logging with automatic context extraction",
     "type": "library",
@@ -12,13 +12,13 @@
     ],
     "require": {
         "php": "^8.2",
-        "illuminate/support": "^12.0",
-        "illuminate/http": "^12.0",
-        "illuminate/queue": "^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/queue": "^10.0|^11.0|^12.0",
         "monolog/monolog": "^3.0"
     },
     "require-dev": {
-        "orchestra/testbench": "^10.0",
+        "orchestra/testbench": "^10.0|^11.0|^12.0",
         "pestphp/pest": "^4.0"
     },
     "autoload": {
