@@ -42,7 +42,7 @@ php artisan vendor:publish --tag=flowlog-config
 Add to your `.env` file:
 
 ```env
-FLOWLOG_API_URL=https://api.flowlog.io/api/v1/logs
+FLOWLOG_API_URL=https://flowlog.io/api/v1/logs
 FLOWLOG_API_KEY=your-api-key-here
 FLOWLOG_SERVICE=my-laravel-app
 ```
@@ -169,7 +169,7 @@ All configuration is in `config/flowlog.php`. Key options:
 ### API Configuration
 
 ```php
-'api_url' => env('FLOWLOG_API_URL', 'https://api.flowlog.io/api/v1/logs'),
+'api_url' => env('FLOWLOG_API_URL', 'https://flowlog.io/api/v1/logs'),
 'api_key' => env('FLOWLOG_API_KEY'),
 'service' => env('FLOWLOG_SERVICE', config('app.name')),
 'env' => env('FLOWLOG_ENV', env('APP_ENV', 'production')),

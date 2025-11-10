@@ -10,7 +10,7 @@ return [
     |
     */
 
-    'api_url' => env('FLOWLOG_API_URL', 'https://api.flowlog.io/api/v1/logs'),
+    'api_url' => env('FLOWLOG_API_URL', 'https://flowlog.io/api/v1/logs'),
     'api_key' => env('FLOWLOG_API_KEY'),
 
     /*
