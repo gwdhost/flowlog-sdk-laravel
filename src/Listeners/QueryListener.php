@@ -57,8 +57,7 @@ class QueryListener
         $context = array_merge($context, $queryContext);
 
         $message = sprintf(
-            'Query executed: %s ms | SQL: %s',
-            round($timeMs, 2),
+            'Query executed: %s',
             $this->formatSql($event->sql)
         );
 
@@ -81,8 +80,7 @@ class QueryListener
         $context = array_merge($context, $queryContext);
 
         $message = sprintf(
-            'Slow query detected: %s ms | SQL: %s',
-            round($timeMs, 2),
+            'Slow query detected: %s',
             $this->formatSql($event->sql)
         );
 
