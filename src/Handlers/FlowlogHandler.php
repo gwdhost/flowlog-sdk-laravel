@@ -4,6 +4,7 @@ namespace Flowlog\FlowlogLaravel\Handlers;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
 use Flowlog\FlowlogLaravel\Jobs\SendLogsJob;
+use Illuminate\Support\Arr;
 use Monolog\Handler\AbstractHandler;
 use Monolog\LogRecord;
 
@@ -79,8 +80,10 @@ class FlowlogHandler extends AbstractHandler
             'trace_id' => $traceId,
             'payload' => json_encode([
                 'message' => $message,
-                'context' => $context,
-            ]),
+            ] + Arr::except(
+                $context,
+                ['iteration_key', 'trace_id', 'session_id', 'user_id']
+            )),
         ];
 
         // Only include iteration_key if it's not null (API validation requirement)

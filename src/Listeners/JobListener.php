@@ -45,10 +45,9 @@ class JobListener
         );
 
         $message = sprintf(
-            'Job processing: %s on queue %s (attempt %d)',
+            'Job processing: %s on queue %s',
             $this->getJobName($event->job, $jobClass),
-            $queue,
-            $attempts
+            $queue
         );
 
         Log::channel('flowlog')->info($message, $context);
@@ -126,10 +125,9 @@ class JobListener
         }
 
         $message = sprintf(
-            'Job failed: %s on queue %s (attempt %d)',
+            'Job failed: %s on queue %s',
             $this->getJobName($event->job, $jobClass),
-            $queue,
-            $attempts
+            $queue
         );
 
         Log::channel('flowlog')->error($message, $context);

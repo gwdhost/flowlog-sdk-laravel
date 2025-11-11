@@ -55,47 +55,47 @@ class Flowlog
     /**
      * Log an info message.
      */
-    public function info(string $message, array $context = []): void
+    public function info(string $message, array $context = []): self
     {
-        $this->log('info', $message, $context);
+        return $this->log('info', $message, $context);
     }
 
     /**
      * Log an error message.
      */
-    public function error(string $message, array $context = []): void
+    public function error(string $message, array $context = []): self
     {
-        $this->log('error', $message, $context);
+        return $this->log('error', $message, $context);
     }
 
     /**
      * Log a warning message.
      */
-    public function warn(string $message, array $context = []): void
+    public function warn(string $message, array $context = []): self
     {
-        $this->log('warning', $message, $context);
+        return $this->log('warning', $message, $context);
     }
 
     /**
      * Log a debug message.
      */
-    public function debug(string $message, array $context = []): void
+    public function debug(string $message, array $context = []): self
     {
-        $this->log('debug', $message, $context);
+        return $this->log('debug', $message, $context);
     }
 
     /**
      * Log a critical message.
      */
-    public function critical(string $message, array $context = []): void
+    public function critical(string $message, array $context = []): self
     {
-        $this->log('critical', $message, $context);
+        return $this->log('critical', $message, $context);
     }
 
     /**
      * Internal log method.
      */
-    protected function log(string $level, string $message, array $context = []): void
+    protected function log(string $level, string $message, array $context = []): self
     {
         $logContext = $this->context;
 
@@ -112,6 +112,8 @@ class Flowlog
         $logContext = array_merge($logContext, $context);
 
         Log::channel('flowlog')->{$level}($message, $logContext);
+
+        return $this;
     }
 
     /**
