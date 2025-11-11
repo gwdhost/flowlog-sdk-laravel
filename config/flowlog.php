@@ -86,6 +86,7 @@ return [
     'query' => [
         'slow_threshold_ms' => env('FLOWLOG_QUERY_SLOW_THRESHOLD', 1000),
         'log_failed' => env('FLOWLOG_QUERY_LOG_FAILED', true),
+        'log_all' => env('FLOWLOG_QUERY_LOG_ALL', false), // Log all queries, not just slow/failed ones
     ],
 
     /*

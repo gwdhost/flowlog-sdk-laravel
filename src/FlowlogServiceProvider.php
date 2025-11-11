@@ -18,6 +18,26 @@ use Illuminate\Support\ServiceProvider;
 class FlowlogServiceProvider extends ServiceProvider
 {
     /**
+     * Track if HTTP/Query event listeners have been registered to prevent duplicates.
+     */
+    protected static bool $listenersRegistered = false;
+    
+    /**
+     * Track if booted callback has been set to prevent multiple registrations.
+     */
+    protected static bool $bootedCallbackSet = false;
+    
+    /**
+     * Track if job listeners have been registered.
+     */
+    protected static bool $jobListenersRegistered = false;
+    
+    /**
+     * Track if query listener has been registered.
+     */
+    protected static bool $queryListenerRegistered = false;
+
+    /**
      * Register services.
      */
     public function register(): void
@@ -83,27 +103,44 @@ class FlowlogServiceProvider extends ServiceProvider
      */
     protected function registerEventListeners(): void
     {
-        $this->app->booted(function () {    
-            // Query logging
-            if (config('flowlog.features.query_logging', false)) {
-                Event::listen(QueryExecuted::class, [QueryListener::class, 'handle']);
-            }
+        // Query logging - can be registered immediately (doesn't need app to be booted)
+        if (config('flowlog.features.query_logging', false) && !self::$queryListenerRegistered) {
+            self::$queryListenerRegistered = true;
+            $queryListener = $this->app->make(QueryListener::class);
+            Event::listen(QueryExecuted::class, [$queryListener, 'handle']);
+        }
 
-            // HTTP logging - Use RequestHandled event (proper Laravel way for versions 10, 11, and 12)
-            if (config('flowlog.features.http_logging', false)) {
-                Event::listen(RequestHandled::class, [HttpListener::class, 'handle']);
-            }
-        });
+        // Register listeners that need app to be booted
+        if (!self::$bootedCallbackSet) {
+            self::$bootedCallbackSet = true;
+            
+            $this->app->booted(function () {
+                // Prevent duplicate registrations within the callback
+                if (self::$listenersRegistered) {
+                    return;
+                }
 
-        // Job/Queue logging (enabled by default)
-        if (config('flowlog.features.job_logging', true)) {
+                // HTTP logging - Use RequestHandled event (proper Laravel way for versions 10, 11, and 12)
+                if (config('flowlog.features.http_logging', false)) {
+                    $httpListener = $this->app->make(HttpListener::class);
+                    Event::listen(RequestHandled::class, [$httpListener, 'handle']);
+                }
+                
+                // Mark as registered
+                self::$listenersRegistered = true;
+            });
+        }
+
+        // Job/Queue logging (enabled by default) - can register immediately
+        if (config('flowlog.features.job_logging', true) && !self::$jobListenersRegistered) {
+            self::$jobListenersRegistered = true;
             $jobListener = $this->app->make(JobListener::class);
             Event::listen(JobProcessing::class, [$jobListener, 'handleProcessing']);
             Event::listen(JobProcessed::class, [$jobListener, 'handleProcessed']);
             Event::listen(JobFailed::class, [$jobListener, 'handleFailed']);
         }
 
-        // Exception reporting
+        // Exception reporting - can register immediately
         if (config('flowlog.features.exception_reporting', true)) {
             $this->registerExceptionReporting();
         }

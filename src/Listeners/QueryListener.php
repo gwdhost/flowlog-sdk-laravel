@@ -20,8 +20,15 @@ class QueryListener
      */
     public function handle(QueryExecuted $event): void
     {
+        $logAll = config('flowlog.query.log_all', false);
         $slowThreshold = config('flowlog.query.slow_threshold_ms', 1000);
         $timeMs = $event->time;
+
+        // Log all queries if enabled
+        if ($logAll) {
+            $this->logQuery($event, $timeMs);
+            return;
+        }
 
         // Log slow queries
         if ($timeMs >= $slowThreshold) {
@@ -32,6 +39,30 @@ class QueryListener
         if (isset($event->result) && $event->result === false) {
             $this->logFailedQuery($event);
         }
+    }
+
+    /**
+     * Log a query (all queries when log_all is enabled).
+     */
+    protected function logQuery(QueryExecuted $event, float $timeMs): void
+    {
+        $context = $this->contextExtractor->extract();
+        $queryContext = $this->contextExtractor->extractQueryContext([
+            'sql' => $event->sql,
+            'bindings' => $event->bindings,
+            'time' => $timeMs,
+            'connection' => $event->connectionName,
+        ]);
+
+        $context = array_merge($context, $queryContext);
+
+        $message = sprintf(
+            'Query executed: %s ms | SQL: %s',
+            round($timeMs, 2),
+            $this->formatSql($event->sql)
+        );
+
+        Log::channel('flowlog')->info($message, $context);
     }
 
     /**
