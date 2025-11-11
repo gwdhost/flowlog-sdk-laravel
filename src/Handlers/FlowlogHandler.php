@@ -72,11 +72,14 @@ class FlowlogHandler extends AbstractHandler
             $message = $this->formatMessage($record->message, $record->context);
         }
 
+        // Ensure timestamp is in UTC
+        $timestamp = $record->datetime->setTimezone(new \DateTimeZone('UTC'))->format('c');
+
         $logEntry = [
             'user_id' => $userId,
             'session_id' => $sessionId,
             'level' => $this->mapLogLevel($record->level->getName()),
-            'timestamp' => $record->datetime->format('c'),
+            'timestamp' => $timestamp,
             'trace_id' => $traceId,
             'payload' => json_encode([
                 'message' => $message,
