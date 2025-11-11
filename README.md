@@ -41,10 +41,55 @@ php artisan vendor:publish --tag=flowlog-config
 
 Add to your `.env` file:
 
+#### Required Variables
+
 ```env
-FLOWLOG_API_URL=https://flowlog.io/api/v1/logs
 FLOWLOG_API_KEY=your-api-key-here
-FLOWLOG_SERVICE=my-laravel-app
+```
+
+#### Optional Variables
+
+```env
+# API Configuration
+FLOWLOG_API_URL=https://flowlog.io/api/v1/logs
+FLOWLOG_SERVICE=my-laravel-app  # Defaults to APP_NAME if not set
+FLOWLOG_ENV=production           # Defaults to APP_ENV if not set
+
+# Batch Configuration
+FLOWLOG_BATCH_SIZE=50            # Max logs per batch (default: 50)
+FLOWLOG_BATCH_INTERVAL=5         # Flush interval in seconds (default: 5)
+FLOWLOG_BATCH_MAX_SIZE=65536     # Max batch size in bytes, 64KB (default: 65536)
+
+# Feature Toggles
+FLOWLOG_QUERY_LOGGING=false      # Enable slow/failed query logging (default: false)
+FLOWLOG_HTTP_LOGGING=false       # Enable HTTP request/response logging (default: false)
+FLOWLOG_JOB_LOGGING=true         # Enable job/queue logging (default: true)
+FLOWLOG_EXCEPTION_REPORTING=true # Auto-report exceptions (default: true)
+
+# Query Logging Configuration
+FLOWLOG_QUERY_SLOW_THRESHOLD=1000  # Log queries slower than this in ms (default: 1000)
+FLOWLOG_QUERY_LOG_FAILED=true      # Log failed queries (default: true)
+FLOWLOG_QUERY_LOG_ALL=false        # Log all queries, not just slow/failed (default: false)
+
+# HTTP Logging Configuration
+FLOWLOG_HTTP_LOG_HEADERS=false    # Include headers in HTTP logs (default: false)
+
+# Exception Reporting Configuration
+FLOWLOG_EXCEPTION_LEVEL=error     # Exception log level: 'error' or 'critical' (default: 'error')
+
+# Queue Configuration
+FLOWLOG_QUEUE_CONNECTION=sync     # Queue connection (default: sync, uses QUEUE_CONNECTION if set)
+FLOWLOG_QUEUE_NAME=default        # Queue name (default: 'default')
+FLOWLOG_QUEUE_TRIES=3             # Number of retry attempts (default: 3)
+FLOWLOG_QUEUE_DEBOUNCE_DELAY=3    # Seconds to wait before sending (default: 3)
+# Note: FLOWLOG_QUEUE_BACKOFF is configured in config/flowlog.php as an array [1, 5, 10]
+# representing retry delays in seconds. Cannot be set via .env directly.
+
+# Chunking Configuration
+FLOWLOG_CHUNK_SIZE=100            # Number of logs per chunk when sending (default: 100)
+
+# Fallback Log Channel
+FLOWLOG_FALLBACK_LOG_CHANNEL=single  # Channel for internal SDK logs (default: 'single')
 ```
 
 ### 4. Add Flowlog Channel to Logging Config
@@ -69,8 +114,17 @@ Edit `config/logging.php` and add the Flowlog channel to your stack:
 
 ### 5. (Optional) Add Middleware for Iteration/Trace IDs
 
-If you want automatic iteration key and trace ID generation per
-request, register the middleware based on your Laravel version:
+**Important**: The service provider automatically registers
+`FlowlogTerminatingMiddleware` for flushing logs at the end of
+requests. However, if you want automatic iteration key and trace ID
+generation, or automatic handling of the `X-Flowlog-Ignore` header,
+you need to manually register `FlowlogMiddleware`.
+
+**Note**: The `FlowlogMiddleware` handles the `X-Flowlog-Ignore`
+header to prevent infinite loops. When this header is present, logging
+will be skipped for that request. Without this middleware, you can
+still use the guard programmatically (see "Preventing Infinite Loops"
+section).
 
 #### Laravel 11 and 12
 
@@ -242,6 +296,75 @@ The SDK automatically extracts the following context:
 - **HTTP Information**: Method, URL, path, IP, user agent
 - **Session ID**: If session is started
 
+## Preventing Infinite Loops
+
+The SDK includes built-in guards to prevent infinite loops when
+logging. The guard mechanism uses the `X-Flowlog-Ignore` header or
+programmatic guards.
+
+### Using the X-Flowlog-Ignore Header
+
+Set the `X-Flowlog-Ignore` header on HTTP requests to prevent logging:
+
+```php
+// In your HTTP client request
+$response = Http::withHeaders([
+    'X-Flowlog-Ignore' => '1',
+])->post('https://api.example.com/endpoint');
+```
+
+When this header is present, the SDK will:
+
+- Skip HTTP request/response logging
+- Skip query logging
+- Skip job event logging
+- Prevent log flushing
+
+### Programmatic Guard Control
+
+You can also control the guard programmatically:
+
+```php
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
+
+// Set ignore guard
+FlowlogGuard::setIgnore(true);
+
+try {
+    // Your code here - logging will be skipped
+} finally {
+    // Reset guard
+    FlowlogGuard::setIgnore(false);
+}
+```
+
+### ProcessLogJob Integration
+
+If you're using `ProcessLogJob` to process incoming logs, you should
+set the guard when the job starts:
+
+```php
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
+
+class ProcessLogJob implements ShouldQueue
+{
+    public function handle(): void
+    {
+        FlowlogGuard::whileInProcessLogJob(function () {
+            // Your job logic here
+            // Queries and job events won't be logged
+        });
+    }
+}
+```
+
+Alternatively, you can set the `X-Flowlog-Ignore` header on the HTTP
+request that triggers the job.
+
+**Note**: The SDK automatically sets `X-Flowlog-Ignore` when
+`SendLogsJob` makes HTTP requests to the Flowlog API to prevent
+infinite loops.
+
 ## Queue Configuration
 
 Logs are sent asynchronously via Laravel queues. Configure in
@@ -274,6 +397,30 @@ use Flowlog\FlowlogLaravel\Facades\Flowlog;
 Flowlog::shouldReceive('info')
     ->once()
     ->with('Test message');
+```
+
+### Preventing Logging in Tests
+
+To prevent logging during tests, you can set the ignore guard:
+
+```php
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
+
+beforeEach(function () {
+    FlowlogGuard::setIgnore(true);
+});
+
+afterEach(function () {
+    FlowlogGuard::setIgnore(false);
+});
+```
+
+Or use the `X-Flowlog-Ignore` header in your test HTTP requests:
+
+```php
+$response = $this->withHeaders([
+    'X-Flowlog-Ignore' => '1',
+])->get('/api/endpoint');
 ```
 
 ## License
