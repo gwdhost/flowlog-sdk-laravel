@@ -15,13 +15,10 @@ class FlowlogMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         // Extract or generate iteration key
-        $iterationKey = $request->header('X-Iteration-Key') ?? $request->header('X-Iteration-Key');
-        if (empty($iterationKey)) {
-            $iterationKey = (string) Str::uuid();
-        }
+        $iterationKey = $request->header('X-Iteration-Key') ?? $request->header('X-Flowlog-Iteration-Key');
 
         // Extract or generate trace ID
-        $traceId = $request->header('X-Trace-Id') ?? $request->header('X-Trace-ID');
+        $traceId = $request->header('X-Trace-Id') ?? $request->header('X-Flowlog-Trace-ID');
         if (empty($traceId)) {
             $traceId = (string) Str::uuid();
         }
@@ -35,7 +32,10 @@ class FlowlogMiddleware
         // Add to response headers for client tracking
         $response = $next($request);
         $request->attributes->set('_response_status', $response->getStatusCode());
-        $response->headers->set('X-Iteration-Key', $iterationKey);
+        if ($iterationKey) {
+            $response->headers->set('X-Flowlog-Iteration-Key', $iterationKey);
+        }
+        
         $response->headers->set('X-Trace-Id', $traceId);
 
         return $response;
