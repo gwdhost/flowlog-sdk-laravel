@@ -3,10 +3,11 @@
 namespace Flowlog\FlowlogLaravel\Listeners;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class HttpListener
 {
@@ -24,7 +25,9 @@ class HttpListener
      */
     public function handle(RequestHandled $event): void
     {
-        $this->logRequest($event->request, $event->response);
+        // Ensure we have both request and response
+        $response = $event->response ?? null;
+        $this->logRequest($event->request, $response);
     }
 
     /**
@@ -41,8 +44,19 @@ class HttpListener
     /**
      * Log HTTP request and response.
      */
-    protected function logRequest(Request $request, ?Response $response = null): void
+    protected function logRequest(Request $request, $response = null): void
     {
+        // Block all HTTP logging during sending operations to prevent infinite loops
+        if (FlowlogGuard::isSending()) {
+            return;
+        }
+
+        // Prevent infinite loops: only block when actually sending logs to API
+        // (not during flush/dispatch, which just queues a job)
+        if (FlowlogGuard::inSendLogsJob()) {
+            return;
+        }
+
         // Don't log console/artisan commands
         if (app()->runningInConsole()) {
             return;
@@ -61,21 +75,45 @@ class HttpListener
         if ($this->shouldExcludeRoute($request)) {
             return;
         }
-
+        
+        // Don't log requests when ignore guard is set (e.g., via X-Flowlog-Ignore header)
+        if (FlowlogGuard::shouldIgnore()) {
+            return;
+        }
+        
         $startTime = $this->getStartTime($request);
         $executionTime = $startTime ? microtime(true) - $startTime : null;
-
+        
         // Get status code from response if available
         $statusCode = null;
         try {
-            if ($response && method_exists($response, 'getStatusCode')) {
-                $statusCode = $response->getStatusCode();
-            } else {
-                // Fallback: try to get from request attributes (set by middleware)
+            
+            if ($response !== null) {
+                // Try multiple ways to get the status code
+                // First, check if it's a Symfony Response (most common)
+                if ($response instanceof SymfonyResponse) {
+                    $statusCode = $response->getStatusCode();
+                } elseif (method_exists($response, 'getStatusCode')) {
+                    $statusCode = $response->getStatusCode();
+                } elseif (method_exists($response, 'status')) {
+                    // Laravel Response objects have status() method
+                    $statusCode = $response->status();
+                } elseif (is_object($response) && property_exists($response, 'statusCode') && is_numeric($response->statusCode)) {
+                    $statusCode = (int) $response->statusCode;
+                } elseif (is_object($response) && property_exists($response, 'status') && is_numeric($response->status)) {
+                    $statusCode = (int) $response->status;
+                }
+            }
+            
+            // Fallback: try to get from request attributes (set by middleware)
+            if ($statusCode === null) {
                 $statusCode = $request->attributes->get('_response_status');
             }
         } catch (\Exception $e) {
-            // Status code not available
+            // Status code not available - try fallback
+            if ($statusCode === null) {
+                $statusCode = $request->attributes->get('_response_status');
+            }
         }
 
         $context = $this->contextExtractor->extractHttpContext($request, $statusCode, $executionTime);

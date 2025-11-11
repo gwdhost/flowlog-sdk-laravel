@@ -26,6 +26,11 @@ class TestCase extends Orchestra
         $app['config']->set('flowlog.api_key', 'test-api-key');
         $app['config']->set('flowlog.service', 'test-service');
         $app['config']->set('flowlog.env', 'testing');
+
+        // Setup logging config to include flowlog channel
+        $app['config']->set('logging.channels.flowlog', [
+            'driver' => 'flowlog',
+        ]);
     }
 }
 

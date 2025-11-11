@@ -30,20 +30,16 @@ class FlowlogHandler extends AbstractHandler
 
     /**
      * Handle a log record.
+     * Only accumulates logs in memory - no automatic flushing during request.
      */
     public function handle(LogRecord $record): bool
     {
         if (! $this->isHandling($record)) {
             return false;
         }
-
+        
         $logEntry = $this->formatLogEntry($record);
         $this->batch[] = $logEntry;
-
-        // Check if we should flush
-        if ($this->shouldFlush()) {
-            $this->flush();
-        }
 
         return true;
     }
@@ -156,6 +152,7 @@ class FlowlogHandler extends AbstractHandler
 
     /**
      * Flush the batch to the queue.
+     * This is only used as a safety net in __destruct().
      */
     protected function flush(): void
     {
@@ -168,10 +165,8 @@ class FlowlogHandler extends AbstractHandler
         $this->lastFlushTime = time();
 
         try {
-            // Accumulate logs in cache first
-            SendLogsJob::accumulateLogs($logs);
-            
-            // Dispatch the job (it will be unique and delayed, merging with cache on execution)
+            // Dispatch the job directly (no cache accumulation needed)
+            // Note: We don't need a guard here because we're just dispatching a job, not sending logs
             SendLogsJob::dispatch($logs, $this->apiUrl, $this->apiKey);
         } catch (\Exception $e) {
             // If queue fails, try to log to Laravel's default logger
@@ -184,11 +179,35 @@ class FlowlogHandler extends AbstractHandler
     }
 
     /**
-     * Flush any remaining logs (called on shutdown).
+     * Get all accumulated logs.
+     */
+    public function getAllLogs(): array
+    {
+        return $this->batch;
+    }
+
+    /**
+     * Clear the batch after flushing.
+     */
+    public function clearBatch(): void
+    {
+        $this->batch = [];
+    }
+
+    /**
+     * Flush any remaining logs (called on shutdown as safety net).
      */
     public function __destruct()
     {
-        $this->flush();
+        // Only flush if there are logs and app is still available
+        // This is a safety net for cases where middleware doesn't run
+        if (!empty($this->batch) && app()->bound('log')) {
+            try {
+                $this->flush();
+            } catch (\Throwable $e) {
+                // Silently fail during shutdown to prevent errors
+            }
+        }
     }
 }
 

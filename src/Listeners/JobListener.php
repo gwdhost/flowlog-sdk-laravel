@@ -3,6 +3,7 @@
 namespace Flowlog\FlowlogLaravel\Listeners;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Flowlog\FlowlogLaravel\Jobs\SendLogsJob;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -25,7 +26,25 @@ class JobListener
      */
     public function handleProcessing(JobProcessing $event): void
     {
+        // Set the current job class for QueryListener to detect ProcessLogJob
         $jobClass = $this->getJobClass($event->job);
+        \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass($jobClass);
+        
+        // Block all job logging during sending operations to prevent infinite loops
+        if (FlowlogGuard::isSending()) {
+            return;
+        }
+
+        // Prevent infinite loops: only block when actually sending logs to API
+        // (not during flush/dispatch, which just queues a job)
+        if (FlowlogGuard::inSendLogsJob()) {
+            return;
+        }
+        
+        // Don't log jobs when ignore guard is set (e.g., via X-Flowlog-Ignore header)
+        if (FlowlogGuard::shouldIgnore()) {
+            return;
+        }
         
         // Check if job should be excluded
         if ($this->shouldExcludeJob($event->job, $jobClass)) {
@@ -58,6 +77,24 @@ class JobListener
      */
     public function handleProcessed(JobProcessed $event): void
     {
+        // Clear the current job class when job completes
+        \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass(null);
+        
+        // Block all job logging during sending operations to prevent infinite loops
+        if (FlowlogGuard::isSending()) {
+            return;
+        }
+
+        // Prevent infinite loops: only block when actually sending logs to API
+        if (FlowlogGuard::inSendLogsJob()) {
+            return;
+        }
+
+        // Don't log jobs when ignore guard is set (e.g., via X-Flowlog-Ignore header)
+        if (FlowlogGuard::shouldIgnore()) {
+            return;
+        }
+
         $jobClass = $this->getJobClass($event->job);
         
         // Check if job should be excluded
@@ -95,6 +132,24 @@ class JobListener
      */
     public function handleFailed(JobFailed $event): void
     {
+        // Clear the current job class when job fails
+        \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass(null);
+        
+        // Block all job logging during sending operations to prevent infinite loops
+        if (FlowlogGuard::isSending()) {
+            return;
+        }
+
+        // Prevent infinite loops: only block when actually sending logs to API
+        if (FlowlogGuard::inSendLogsJob()) {
+            return;
+        }
+
+        // Don't log jobs when ignore guard is set (e.g., via X-Flowlog-Ignore header)
+        if (FlowlogGuard::shouldIgnore()) {
+            return;
+        }
+
         $jobClass = $this->getJobClass($event->job);
         
         // Check if job should be excluded

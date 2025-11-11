@@ -3,9 +3,11 @@
 namespace Flowlog\FlowlogLaravel;
 
 use Flowlog\FlowlogLaravel\Handlers\FlowlogHandler;
+use Flowlog\FlowlogLaravel\Listeners\FlushLogsListener;
 use Flowlog\FlowlogLaravel\Listeners\HttpListener;
 use Flowlog\FlowlogLaravel\Listeners\JobListener;
 use Flowlog\FlowlogLaravel\Listeners\QueryListener;
+use Flowlog\FlowlogLaravel\Middleware\FlowlogTerminatingMiddleware;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Monolog\Logger;
@@ -52,6 +54,10 @@ class FlowlogServiceProvider extends ServiceProvider
             return new Flowlog();
         });
 
+        // Register FlowlogTerminatingMiddleware as singleton
+        // This ensures the same instance is used for handle() and terminate()
+        $this->app->singleton(FlowlogTerminatingMiddleware::class);
+
         // Register custom log channel
         $this->registerLogChannel();
     }
@@ -68,6 +74,9 @@ class FlowlogServiceProvider extends ServiceProvider
 
         // Register event listeners
         $this->registerEventListeners();
+
+        // Register terminating middleware for lifecycle-based flushing
+        $this->registerTerminatingMiddleware();
     }
 
     /**
@@ -104,41 +113,38 @@ class FlowlogServiceProvider extends ServiceProvider
     protected function registerEventListeners(): void
     {
         // Query logging - can be registered immediately (doesn't need app to be booted)
-        if (config('flowlog.features.query_logging', false) && !self::$queryListenerRegistered) {
-            self::$queryListenerRegistered = true;
+        if (config('flowlog.features.query_logging', false)) {
             $queryListener = $this->app->make(QueryListener::class);
             Event::listen(QueryExecuted::class, [$queryListener, 'handle']);
         }
 
-        // Register listeners that need app to be booted
-        if (!self::$bootedCallbackSet) {
-            self::$bootedCallbackSet = true;
-            
-            $this->app->booted(function () {
-                // Prevent duplicate registrations within the callback
-                if (self::$listenersRegistered) {
-                    return;
-                }
+        // Register listeners that need app to be booted 
+        $this->app->booted(function () {
+            // HTTP logging - Use RequestHandled event (proper Laravel way for versions 10, 11, and 12)
+            if (config('flowlog.features.http_logging', false)) {
+                $httpListener = $this->app->make(HttpListener::class);
+                Event::listen(RequestHandled::class, [$httpListener, 'handle']);
+            }
 
-                // HTTP logging - Use RequestHandled event (proper Laravel way for versions 10, 11, and 12)
-                if (config('flowlog.features.http_logging', false)) {
-                    $httpListener = $this->app->make(HttpListener::class);
-                    Event::listen(RequestHandled::class, [$httpListener, 'handle']);
-                }
-                
-                // Mark as registered
-                self::$listenersRegistered = true;
-            });
-        }
+            // Flush logs at request lifecycle end (for console/artisan commands)
+            // HTTP requests are handled by terminating middleware
+            $flushLogsListener = $this->app->make(FlushLogsListener::class);
+            Event::listen(RequestHandled::class, [$flushLogsListener, 'handle']);
+        });
 
         // Job/Queue logging (enabled by default) - can register immediately
-        if (config('flowlog.features.job_logging', true) && !self::$jobListenersRegistered) {
-            self::$jobListenersRegistered = true;
+        if (config('flowlog.features.job_logging', true)) {
             $jobListener = $this->app->make(JobListener::class);
             Event::listen(JobProcessing::class, [$jobListener, 'handleProcessing']);
             Event::listen(JobProcessed::class, [$jobListener, 'handleProcessed']);
             Event::listen(JobFailed::class, [$jobListener, 'handleFailed']);
         }
+
+        // Flush logs after job completion (for queue workers)
+        // This ensures logs are flushed even when jobs run in queue workers
+        $flushLogsListener = $this->app->make(FlushLogsListener::class);
+        Event::listen(JobProcessed::class, [$flushLogsListener, 'handleJobProcessed']);
+        Event::listen(JobFailed::class, [$flushLogsListener, 'handleJobFailed']);
 
         // Exception reporting - can register immediately
         if (config('flowlog.features.exception_reporting', true)) {
@@ -165,6 +171,42 @@ class FlowlogServiceProvider extends ServiceProvider
                 return new Exceptions\FlowlogExceptionHandler($handler, $app);
             });
         }
+    }
+
+    /**
+     * Register terminating middleware for lifecycle-based flushing.
+     * Works with Laravel 10, 11, and 12.
+     */
+    protected function registerTerminatingMiddleware(): void
+    {
+        // Register middleware when app is booted
+        $this->app->booted(function () {
+            try {
+                $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
+
+                // For Laravel 10 - use pushMiddleware
+                if (method_exists($kernel, 'pushMiddleware')) {
+                    $kernel->pushMiddleware(FlowlogTerminatingMiddleware::class);
+                    return;
+                }
+
+                // For Laravel 11 and 12 - use appendToGroup or append
+                if (method_exists($kernel, 'appendToGroup')) {
+                    $kernel->appendToGroup('web', FlowlogTerminatingMiddleware::class);
+                    $kernel->appendToGroup('api', FlowlogTerminatingMiddleware::class);
+                    return;
+                }
+
+                // Fallback: try to append to middleware groups directly
+                if (method_exists($kernel, 'appendMiddlewareToGroup')) {
+                    $kernel->appendMiddlewareToGroup('web', FlowlogTerminatingMiddleware::class);
+                    $kernel->appendMiddlewareToGroup('api', FlowlogTerminatingMiddleware::class);
+                }
+            } catch (\Throwable $e) {
+                // Silently fail if middleware registration fails
+                // Logs will still be flushed via RequestHandled event and __destruct()
+            }
+        });
     }
 }
 

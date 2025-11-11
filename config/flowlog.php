@@ -157,11 +157,23 @@ return [
     */
 
     'queue' => [
-        'connection' => env('FLOWLOG_QUEUE_CONNECTION', null), // null = default
+        'connection' => env('FLOWLOG_QUEUE_CONNECTION', env('QUEUE_CONNECTION', 'sync')), // sync = default
         'queue' => env('FLOWLOG_QUEUE_NAME', 'default'),
         'tries' => env('FLOWLOG_QUEUE_TRIES', 3),
         'backoff' => env('FLOWLOG_QUEUE_BACKOFF', [1, 5, 10]), // seconds
         'debounce_delay' => env('FLOWLOG_QUEUE_DEBOUNCE_DELAY', 3), // seconds to wait before sending
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Chunking Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configure how logs are chunked when sending to the API.
+    | Large batches are automatically split into smaller chunks.
+    |
+    */
+
+    'chunk_size' => env('FLOWLOG_CHUNK_SIZE', 100), // Number of logs per chunk
 ];
 
