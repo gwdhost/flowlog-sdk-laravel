@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+    bootstrap="vendor/autoload.php"
+    colors="true"
+    cacheDirectory=".phpunit.cache"
+    backupGlobals="false"
+    backupStaticAttributes="false"
+    processIsolation="false"
+    stopOnFailure="false"
+    executionOrder="depends,defects"
+    failOnRisky="false"
+    failOnWarning="false"
+>
+
+    <!-- Where to find tests -->
+    <testsuites>
+        <testsuite name="Pest Suite">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <!-- Disable coverage completely for CI unless manually enabled -->
+    <coverage processUncoveredFiles="false">
+        <include>
+            <directory suffix=".php">app</directory>
+        </include>
+        <report>
+            <!-- Remove Clover logging to avoid the \-\-cache-directory error -->
+            <!-- <clover outputFile="coverage.xml"/> -->
+        </report>
+    </coverage>
+
+    <!-- Environment variables for testing -->
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="CACHE_DRIVER" value="array"/>
+        <env name="DB_CONNECTION" value="sqlite"/>
+        <env name="DB_DATABASE" value=":memory:"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="MAIL_MAILER" value="array"/>
+    </php>
+
+</phpunit>
