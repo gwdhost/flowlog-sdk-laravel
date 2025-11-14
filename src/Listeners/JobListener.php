@@ -5,6 +5,7 @@ namespace Flowlog\FlowlogLaravel\Listeners;
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
 use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Flowlog\FlowlogLaravel\Jobs\SendLogsJob;
+use Flowlog\FlowlogLaravel\Traits\FlowlogIgnoreTrait;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -15,6 +16,7 @@ class JobListener
 {
     protected ContextExtractor $contextExtractor;
     protected array $jobStartTimes = [];
+    protected array $jobIgnoreStates = [];
 
     public function __construct()
     {
@@ -29,6 +31,13 @@ class JobListener
         // Set the current job class for QueryListener to detect ProcessLogJob
         $jobClass = $this->getJobClass($event->job);
         \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass($jobClass);
+        
+        // Check if job uses FlowlogIgnoreTrait and set ignore state
+        $jobId = $this->getJobId($event->job);
+        if ($this->jobUsesIgnoreTrait($jobClass)) {
+            $this->jobIgnoreStates[$jobId] = FlowlogGuard::shouldIgnore();
+            FlowlogGuard::setIgnore(true);
+        }
         
         // Block all job logging during sending operations to prevent infinite loops
         if (FlowlogGuard::isSending()) {
@@ -51,7 +60,6 @@ class JobListener
             return;
         }
 
-        $jobId = $this->getJobId($event->job);
         $queue = $this->getQueue($event->job);
         $attempts = $this->getAttempts($event->job);
 
@@ -80,6 +88,14 @@ class JobListener
         // Clear the current job class when job completes
         \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass(null);
         
+        $jobId = $this->getJobId($event->job);
+        
+        // Reset ignore state if job was using FlowlogIgnoreTrait
+        if (isset($this->jobIgnoreStates[$jobId])) {
+            FlowlogGuard::setIgnore($this->jobIgnoreStates[$jobId]);
+            unset($this->jobIgnoreStates[$jobId]);
+        }
+        
         // Block all job logging during sending operations to prevent infinite loops
         if (FlowlogGuard::isSending()) {
             return;
@@ -102,7 +118,6 @@ class JobListener
             return;
         }
 
-        $jobId = $this->getJobId($event->job);
         $queue = $this->getQueue($event->job);
         $attempts = $this->getAttempts($event->job);
         
@@ -135,6 +150,14 @@ class JobListener
         // Clear the current job class when job fails
         \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass(null);
         
+        $jobId = $this->getJobId($event->job);
+        
+        // Reset ignore state if job was using FlowlogIgnoreTrait
+        if (isset($this->jobIgnoreStates[$jobId])) {
+            FlowlogGuard::setIgnore($this->jobIgnoreStates[$jobId]);
+            unset($this->jobIgnoreStates[$jobId]);
+        }
+        
         // Block all job logging during sending operations to prevent infinite loops
         if (FlowlogGuard::isSending()) {
             return;
@@ -157,7 +180,6 @@ class JobListener
             return;
         }
 
-        $jobId = $this->getJobId($event->job);
         $queue = $this->getQueue($event->job);
         $attempts = $this->getAttempts($event->job);
         
@@ -311,6 +333,19 @@ class JobListener
         // Extract class name without namespace
         $parts = explode('\\', $jobClass);
         return end($parts);
+    }
+
+    /**
+     * Check if a job class uses the FlowlogIgnoreTrait.
+     */
+    protected function jobUsesIgnoreTrait(string $jobClass): bool
+    {
+        if (!class_exists($jobClass)) {
+            return false;
+        }
+
+        $traits = class_uses_recursive($jobClass);
+        return in_array(FlowlogIgnoreTrait::class, $traits, true);
     }
 }
 

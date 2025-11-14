@@ -77,7 +77,9 @@ class HttpListener
         }
         
         // Don't log requests when ignore guard is set (e.g., via X-Flowlog-Ignore header)
-        if (FlowlogGuard::shouldIgnore()) {
+        // Also check the request header directly as a fallback, since RequestHandled event
+        // fires after middleware completes and the guard may have been reset
+        if (FlowlogGuard::shouldIgnore() || $request->hasHeader('X-Flowlog-Ignore')) {
             return;
         }
         

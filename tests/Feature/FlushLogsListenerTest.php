@@ -36,10 +36,20 @@ it('flushes logs when job is processed', function () {
     expect($logs)->toHaveCount(1);
 
     // Mock the log manager to return our handler
+    // Clear any resolved instance first
+    app()->forgetInstance('log');
+    
     $logManager = \Mockery::mock('Illuminate\Log\LogManager');
     $flowlogChannel = \Mockery::mock('Monolog\Logger');
+    $singleChannel = \Mockery::mock('Monolog\Logger');
+    
+    // Allow getHandlers() to be called multiple times
     $flowlogChannel->shouldReceive('getHandlers')->andReturn([$handler]);
+    // Allow channel() to be called multiple times with different channels
     $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    // SendLogsJob constructor calls log() which uses 'single' channel as fallback
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $singleChannel->shouldReceive('info')->andReturn(true);
     // Allow error() calls (for error logging in flushLogs)
     $logManager->shouldReceive('error')->andReturn(true);
     
@@ -47,12 +57,28 @@ it('flushes logs when job is processed', function () {
 
     // Simulate job completion event
     $listener = new FlushLogsListener();
-    $jobProcessedEvent = new JobProcessed('test-connection', new \Illuminate\Queue\Jobs\SyncJob(
-        app(),
-        '{"uuid":"test","displayName":"App\\Jobs\\TestJob","job":"Illuminate\\Queue\\CallQueuedHandler@call","data":{"commandName":"App\\Jobs\\TestJob","command":"O:15:\"App\\Jobs\\TestJob\":0:{}}"}',
-        'test-queue',
-        []
-    ));
+    
+    // Create a mock job that is NOT SendLogsJob
+    $mockJob = \Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    // resolveName() might throw, so allow it to return the job class name
+    $mockJob->shouldReceive('resolveName')->andReturn('App\Jobs\TestJob');
+    // Also allow payload() as fallback
+    $mockJob->shouldReceive('payload')->andReturn([
+        'uuid' => 'test',
+        'displayName' => 'App\Jobs\TestJob',
+        'job' => 'Illuminate\Queue\CallQueuedHandler@call',
+    ]);
+    // Make sure the job property is accessible
+    $mockJob->shouldReceive('getJobId')->andReturn('test-job-id');
+    
+    $jobProcessedEvent = new JobProcessed('test-connection', $mockJob);
+    
+    // Verify the mock is working - check that app('log') returns our mock
+    $resolvedLog = app('log');
+    expect($resolvedLog)->toBe($logManager);
+    
+    // Verify the handler still has logs before flushing
+    expect($handler->getAllLogs())->toHaveCount(1);
     
     $listener->handleJobProcessed($jobProcessedEvent);
 
@@ -86,24 +112,43 @@ it('flushes logs when job fails', function () {
     ));
 
     // Mock the log manager to return our handler
+    // Clear any resolved instance first
+    app()->forgetInstance('log');
+    
     $logManager = \Mockery::mock('Illuminate\Log\LogManager');
     $flowlogChannel = \Mockery::mock('Monolog\Logger');
+    $singleChannel = \Mockery::mock('Monolog\Logger');
+    
+    // Allow getHandlers() to be called multiple times
     $flowlogChannel->shouldReceive('getHandlers')->andReturn([$handler]);
+    // Allow channel() to be called multiple times with different channels
     $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    // SendLogsJob constructor calls log() which uses 'single' channel as fallback
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $singleChannel->shouldReceive('info')->andReturn(true);
     // Allow error() calls (for error logging in flushLogs)
     $logManager->shouldReceive('error')->andReturn(true);
     
     app()->instance('log', $logManager);
 
     $listener = new FlushLogsListener();
+    
+    // Create a mock job that is NOT SendLogsJob
+    $mockJob = \Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    // resolveName() might throw, so allow it to return the job class name
+    $mockJob->shouldReceive('resolveName')->andReturn('App\Jobs\TestJob');
+    // Also allow payload() as fallback
+    $mockJob->shouldReceive('payload')->andReturn([
+        'uuid' => 'test',
+        'displayName' => 'App\Jobs\TestJob',
+        'job' => 'Illuminate\Queue\CallQueuedHandler@call',
+    ]);
+    // Make sure the job property is accessible
+    $mockJob->shouldReceive('getJobId')->andReturn('test-job-id');
+    
     $jobFailedEvent = new \Illuminate\Queue\Events\JobFailed(
         'test-connection',
-        new \Illuminate\Queue\Jobs\SyncJob(
-            app(),
-            '{"uuid":"test","displayName":"App\\Jobs\\TestJob","job":"Illuminate\\Queue\\CallQueuedHandler@call","data":{"commandName":"App\\Jobs\\TestJob","command":"O:15:\"App\\Jobs\\TestJob\":0:{}}"}',
-            'test-queue',
-            []
-        ),
+        $mockJob,
         new \Exception('Job failed')
     );
     

@@ -16,10 +16,11 @@ class FlowlogMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         // Check for X-Flowlog-Ignore header and set guard if present
-        $shouldIgnore = $request->header('X-Flowlog-Ignore');
+        // The presence of the header (regardless of value) indicates logging should be ignored
+        $hasIgnoreHeader = $request->hasHeader('X-Flowlog-Ignore');
         $previousIgnoreState = FlowlogGuard::shouldIgnore();
         
-        if ($shouldIgnore) {
+        if ($hasIgnoreHeader) {
             FlowlogGuard::setIgnore(true);
         }
 

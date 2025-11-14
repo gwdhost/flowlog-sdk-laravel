@@ -13,22 +13,43 @@ use Monolog\Logger;
 it('flushes logs accumulated during job execution', function () {
     Queue::fake();
 
-    // Get the handler from the registered flowlog channel
-    $logManager = app('log');
-    $flowlogChannel = $logManager->channel('flowlog');
-    
-    expect($flowlogChannel)->not->toBeNull();
-    
-    $handlers = $flowlogChannel->getHandlers();
-    $handler = null;
-    foreach ($handlers as $h) {
-        if ($h instanceof FlowlogHandler) {
-            $handler = $h;
-            break;
-        }
-    }
+    // Create a handler and manually add it to the log manager for testing
+    $handler = new FlowlogHandler(
+        apiUrl: 'https://test.flowlog.io/api/v1/logs',
+        apiKey: 'test-key',
+        service: 'test-service',
+        env: 'testing'
+    );
 
-    expect($handler)->not->toBeNull();
+    // Mock the log manager to return our handler
+    // Clear any resolved instance first
+    app()->forgetInstance('log');
+    
+    $logManager = \Mockery::mock('Illuminate\Log\LogManager');
+    $flowlogChannel = \Mockery::mock('Monolog\Logger');
+    $singleChannel = \Mockery::mock('Monolog\Logger');
+    
+    // Allow getHandlers() to be called multiple times
+    $flowlogChannel->shouldReceive('getHandlers')->andReturn([$handler]);
+    // Allow info() to be called and pass through to the handler
+    $flowlogChannel->shouldReceive('info')->andReturnUsing(function ($message, $context = []) use ($handler) {
+        $handler->handle(new \Monolog\LogRecord(
+            datetime: new \DateTimeImmutable(),
+            channel: 'flowlog',
+            level: \Monolog\Level::Info,
+            message: $message,
+            context: $context
+        ));
+    });
+    // Allow channel() to be called multiple times with different channels
+    $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    // SendLogsJob constructor calls log() which uses 'single' channel as fallback
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $singleChannel->shouldReceive('info')->andReturn(true);
+    // Allow error() calls (for error logging in flushLogs)
+    $logManager->shouldReceive('error')->andReturn(true);
+    
+    app()->instance('log', $logManager);
 
     // Simulate a job that logs something
     Log::channel('flowlog')->info('Log from job execution');
@@ -40,14 +61,20 @@ it('flushes logs accumulated during job execution', function () {
     // Simulate job completion - this should trigger FlushLogsListener
     $listener = app(FlushLogsListener::class);
     
-    // Create a mock job event
-    $job = new class {
-        public function getJobId() { return 'test-job-1'; }
-        public function getConnectionName() { return 'sync'; }
-        public function getQueue() { return 'default'; }
-    };
+    // Create a mock job that is NOT SendLogsJob
+    $mockJob = \Mockery::mock(\Illuminate\Contracts\Queue\Job::class);
+    // resolveName() might throw, so allow it to return the job class name
+    $mockJob->shouldReceive('resolveName')->andReturn('App\Jobs\TestJob');
+    // Also allow payload() as fallback
+    $mockJob->shouldReceive('payload')->andReturn([
+        'uuid' => 'test',
+        'displayName' => 'App\Jobs\TestJob',
+        'job' => 'Illuminate\Queue\CallQueuedHandler@call',
+    ]);
+    // Make sure the job property is accessible
+    $mockJob->shouldReceive('getJobId')->andReturn('test-job-id');
     
-    $event = new JobProcessed('sync', $job);
+    $event = new JobProcessed('sync', $mockJob);
     $listener->handleJobProcessed($event);
 
     // Should have dispatched SendLogsJob

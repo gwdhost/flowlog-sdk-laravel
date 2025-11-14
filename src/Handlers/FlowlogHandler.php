@@ -3,6 +3,7 @@
 namespace Flowlog\FlowlogLaravel\Handlers;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Flowlog\FlowlogLaravel\Jobs\SendLogsJob;
 use Illuminate\Support\Arr;
 use Monolog\Handler\AbstractHandler;
@@ -35,6 +36,11 @@ class FlowlogHandler extends AbstractHandler
     public function handle(LogRecord $record): bool
     {
         if (! $this->isHandling($record)) {
+            return false;
+        }
+        
+        // Don't accumulate logs when ignore guard is set (e.g., via X-Flowlog-Ignore header or FlowlogIgnoreTrait)
+        if (FlowlogGuard::shouldIgnore()) {
             return false;
         }
         
