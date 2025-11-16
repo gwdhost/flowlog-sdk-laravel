@@ -8,10 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 it('extracts request context', function () {
-    $request = Request::create('/test', 'GET', [], [], [], [
-        'HTTP_X_REQUEST_ID' => 'req-123',
-        'HTTP_X_TRACE_ID' => 'trace-456',
-    ]);
+    // Clear FlowlogContext to ensure we're testing header extraction
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
+    
+    $request = Request::create('/test', 'GET');
+    // Set headers directly using the header() method
+    $request->headers->set('X-Request-ID', 'req-123');
+    $request->headers->set('X-Trace-Id', 'trace-456');
 
     app()->instance('request', $request);
 
@@ -27,9 +30,15 @@ it('extracts request context', function () {
         ->and($context['request_id'])->toBe('req-123')
         ->and($context)->toHaveKey('trace_id')
         ->and($context['trace_id'])->toBe('trace-456');
+    
+    // Clean up
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
 });
 
 it('generates uuid for missing request id', function () {
+    // Clear FlowlogContext to ensure we're testing header extraction
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
+    
     $request = Request::create('/test', 'GET');
     app()->instance('request', $request);
 
@@ -41,6 +50,9 @@ it('generates uuid for missing request id', function () {
     expect($context)->toHaveKey('request_id')
         ->and($context['request_id'])->toBeString()
         ->and(strlen($context['request_id']))->toBeGreaterThan(0);
+    
+    // Clean up
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
 });
 
 it('extracts exception context', function () {

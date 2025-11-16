@@ -2,6 +2,7 @@
 
 namespace Flowlog\FlowlogLaravel\Middleware;
 
+use Flowlog\FlowlogLaravel\Context\FlowlogContext;
 use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -34,11 +35,9 @@ class FlowlogMiddleware
                 $traceId = (string) Str::uuid();
             }
 
-            // Store in request for context extraction
-            $request->merge([
-                'flowlog_iteration_key' => $iterationKey,
-                'flowlog_trace_id' => $traceId,
-            ]);
+            // Store in FlowlogContext for access throughout request lifecycle
+            FlowlogContext::setIterationKey($iterationKey);
+            FlowlogContext::setTraceId($traceId);
 
             // Add to response headers for client tracking
             $response = $next($request);
@@ -53,6 +52,9 @@ class FlowlogMiddleware
         } finally {
             // Reset the ignore state to its previous value
             FlowlogGuard::setIgnore($previousIgnoreState);
+            // Note: We don't clear FlowlogContext here because defer() actions
+            // and queued jobs dispatched during the request should still have access
+            // to the iteration key. Context will be cleared when appropriate.
         }
     }
 }

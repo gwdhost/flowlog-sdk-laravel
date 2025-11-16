@@ -3,6 +3,7 @@
 namespace Flowlog\FlowlogLaravel\Listeners;
 
 use Flowlog\FlowlogLaravel\Context\ContextExtractor;
+use Flowlog\FlowlogLaravel\Context\FlowlogContext;
 use Flowlog\FlowlogLaravel\Guards\FlowlogGuard;
 use Flowlog\FlowlogLaravel\Jobs\SendLogsJob;
 use Flowlog\FlowlogLaravel\Traits\FlowlogIgnoreTrait;
@@ -31,6 +32,19 @@ class JobListener
         // Set the current job class for QueryListener to detect ProcessLogJob
         $jobClass = $this->getJobClass($event->job);
         \Flowlog\FlowlogLaravel\Listeners\QueryListener::setCurrentJobClass($jobClass);
+        
+        // Extract iteration key from job if it has one, and set it in FlowlogContext
+        // This allows jobs to inherit the iteration key from the request that dispatched them
+        $iterationKey = $this->getJobIterationKey($event->job);
+        if ($iterationKey !== null) {
+            FlowlogContext::setIterationKey($iterationKey);
+        }
+        
+        // Extract trace ID from job if it has one
+        $traceId = $this->getJobTraceId($event->job);
+        if ($traceId !== null) {
+            FlowlogContext::setTraceId($traceId);
+        }
         
         // Check if job uses FlowlogIgnoreTrait and set ignore state
         $jobId = $this->getJobId($event->job);
@@ -346,6 +360,66 @@ class JobListener
 
         $traits = class_uses_recursive($jobClass);
         return in_array(FlowlogIgnoreTrait::class, $traits, true);
+    }
+
+    /**
+     * Get iteration key from job instance.
+     * Checks for iterationKey property or method.
+     */
+    protected function getJobIterationKey($queueJob): ?string
+    {
+        // Try to get from job instance property
+        if (is_object($queueJob) && property_exists($queueJob, 'iterationKey')) {
+            return $queueJob->iterationKey ?? null;
+        }
+
+        // Try to get from job payload
+        if (method_exists($queueJob, 'payload')) {
+            $payload = $queueJob->payload();
+            if (isset($payload['data']['iterationKey'])) {
+                return $payload['data']['iterationKey'];
+            }
+        }
+
+        // Try to get from job's command property (for serialized jobs)
+        if (method_exists($queueJob, 'getCommand')) {
+            $command = $queueJob->getCommand();
+            if (is_object($command) && property_exists($command, 'iterationKey')) {
+                return $command->iterationKey ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get trace ID from job instance.
+     * Checks for traceId property or method.
+     */
+    protected function getJobTraceId($queueJob): ?string
+    {
+        // Try to get from job instance property
+        if (is_object($queueJob) && property_exists($queueJob, 'traceId')) {
+            return $queueJob->traceId ?? null;
+        }
+
+        // Try to get from job payload
+        if (method_exists($queueJob, 'payload')) {
+            $payload = $queueJob->payload();
+            if (isset($payload['data']['traceId'])) {
+                return $payload['data']['traceId'];
+            }
+        }
+
+        // Try to get from job's command property (for serialized jobs)
+        if (method_exists($queueJob, 'getCommand')) {
+            $command = $queueJob->getCommand();
+            if (is_object($command) && property_exists($command, 'traceId')) {
+                return $command->traceId ?? null;
+            }
+        }
+
+        return null;
     }
 }
 

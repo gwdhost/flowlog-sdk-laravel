@@ -3,7 +3,6 @@
 namespace Flowlog\FlowlogLaravel\Context;
 
 use Illuminate\Http\Request;
-
 use Illuminate\Support\Str;
 
 class ContextExtractor
@@ -59,16 +58,16 @@ class ContextExtractor
         }
         $context['request_id'] = $requestId;
 
-        // Extract iteration key from request merge (set by middleware) or header
-        $iterationKey = $request->input('flowlog_iteration_key')
+        // Extract iteration key from FlowlogContext first, then fall back to headers
+        $iterationKey = FlowlogContext::getIterationKey()
             ?? $request->header('X-Iteration-Key')
-            ?? $request->header('X-Iteration-Key');
+            ?? $request->header('X-Flowlog-Iteration-Key');
         if (!empty($iterationKey)) {
             $context['iteration_key'] = $iterationKey;
         }
 
-        // Extract trace ID from request merge (set by middleware) or header or generate one
-        $traceId = $request->input('flowlog_trace_id')
+        // Extract trace ID from FlowlogContext first, then fall back to headers or generate one
+        $traceId = FlowlogContext::getTraceId()
             ?? $request->header('X-Trace-Id')
             ?? $request->header('X-Trace-ID');
         if (empty($traceId)) {
@@ -179,6 +178,18 @@ class ContextExtractor
 
         if ($executionTime !== null) {
             $context['job_execution_time_ms'] = round($executionTime * 1000, 2);
+        }
+
+        // Include iteration key from FlowlogContext if available
+        $iterationKey = FlowlogContext::getIterationKey();
+        if (!empty($iterationKey)) {
+            $context['iteration_key'] = $iterationKey;
+        }
+
+        // Include trace ID from FlowlogContext if available
+        $traceId = FlowlogContext::getTraceId();
+        if (!empty($traceId)) {
+            $context['trace_id'] = $traceId;
         }
 
         return $context;

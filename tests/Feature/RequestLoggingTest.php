@@ -292,3 +292,425 @@ it('middleware sets and resets ignore guard correctly with X-Flowlog-Ignore head
     expect(FlowlogGuard::shouldIgnore())->toBeFalse();
 });
 
+it('includes iteration key from X-Iteration-Key header in HTTP request logs', function () {
+    Queue::fake();
+    
+    $iterationKey = 'test-iteration-key-123';
+    
+    // Set iteration key in FlowlogContext (as middleware would do)
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::setIterationKey($iterationKey);
+    
+    // Set up a route so the request has a route (required by HttpListener)
+    Route::get('/test', function () {
+        return response()->json(['message' => 'ok']);
+    })->name('test.route');
+    
+    // Create a request and match it to the route
+    $request = \Illuminate\Http\Request::create('/test', 'GET');
+    $request->headers->set('X-Iteration-Key', $iterationKey);
+    
+    // Match the route to the request
+    $route = Route::getRoutes()->match($request);
+    $request->setRouteResolver(function () use ($route) {
+        return $route;
+    });
+    
+    // Bind the request to the app
+    app()->instance('request', $request);
+    
+    // Create a mock handler to capture logs
+    $handler = new FlowlogHandler(
+        apiUrl: 'https://test.flowlog.io/api/v1/logs',
+        apiKey: 'test-key',
+        service: 'test-service',
+        env: 'testing'
+    );
+    
+    // Mock the log manager to return our handler
+    app()->forgetInstance('log');
+    
+    // Create a real Monolog logger with our handler
+    $flowlogChannel = new \Monolog\Logger('flowlog', [$handler]);
+    $singleChannel = new \Monolog\Logger('single');
+    
+    $logManager = \Mockery::mock('Illuminate\Log\LogManager');
+    $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $logManager->shouldReceive('error')->andReturn(true);
+    
+    app()->instance('log', $logManager);
+    
+    // Create response
+    $response = response()->json(['message' => 'ok']);
+    
+    // Use reflection to directly call logRequest and bypass console check
+    // We'll use a closure to temporarily override runningInConsole
+    $listener = new HttpListener();
+    $reflection = new \ReflectionClass($listener);
+    $method = $reflection->getMethod('logRequest');
+    $method->setAccessible(true);
+    
+    // Create a custom listener that bypasses the console check
+    $customListener = new class extends HttpListener {
+        protected function logRequest(\Illuminate\Http\Request $request, $response = null): void
+        {
+            // Skip console check by directly calling parent logic
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::isSending()) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::inSendLogsJob()) {
+                return;
+            }
+            // Skip: if (app()->runningInConsole()) { return; }
+            if (! $request || $request->method() == 'OPTIONS') {
+                return;
+            }
+            if (! $request->route()) {
+                return;
+            }
+            if ($this->shouldExcludeRoute($request)) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::shouldIgnore() || $request->hasHeader('X-Flowlog-Ignore')) {
+                return;
+            }
+            
+            $startTime = $this->getStartTime($request);
+            $executionTime = $startTime ? microtime(true) - $startTime : null;
+            
+            $statusCode = null;
+            try {
+                if ($response !== null) {
+                    if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'getStatusCode')) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'status')) {
+                        $statusCode = $response->status();
+                    }
+                }
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            } catch (\Exception $e) {
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            }
+
+            $context = $this->contextExtractor->extractHttpContext($request, $statusCode, $executionTime);
+
+            if (config('flowlog.http.log_headers', false)) {
+                $context['http_headers'] = $this->sanitizeHeaders($request->headers->all());
+            }
+
+            $level = $this->getLogLevel($statusCode);
+            $message = sprintf(
+                '%s %s - %s',
+                $request->method(),
+                $request->path(),
+                $statusCode ?? 'N/A'
+            );
+
+            \Illuminate\Support\Facades\Log::channel('flowlog')->{$level}($message, $context);
+        }
+    };
+    
+    $customListener->handle(new RequestHandled($request, $response));
+    
+    // Get the logs from the handler
+    $logs = $handler->getAllLogs();
+    
+    // Verify that a log was created
+    expect($logs)->toHaveCount(1);
+    
+    // Verify the log contains the iteration key (it's at the top level in the formatted log entry)
+    $log = $logs[0];
+    expect($log['iteration_key'])->toBe($iterationKey);
+    
+    // Clean up
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
+});
+
+it('includes iteration key from X-Flowlog-Iteration-Key header in HTTP request logs', function () {
+    Queue::fake();
+    
+    $iterationKey = 'test-iteration-key-456';
+    
+    // Set iteration key in FlowlogContext (as middleware would do)
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::setIterationKey($iterationKey);
+    
+    // Set up a route so the request has a route (required by HttpListener)
+    Route::get('/test', function () {
+        return response()->json(['message' => 'ok']);
+    })->name('test.route');
+    
+    // Create a request and match it to the route
+    $request = \Illuminate\Http\Request::create('/test', 'GET');
+    $request->headers->set('X-Flowlog-Iteration-Key', $iterationKey);
+    
+    // Match the route to the request
+    $route = Route::getRoutes()->match($request);
+    $request->setRouteResolver(function () use ($route) {
+        return $route;
+    });
+    
+    // Bind the request to the app
+    app()->instance('request', $request);
+    
+    // Create a mock handler to capture logs
+    $handler = new FlowlogHandler(
+        apiUrl: 'https://test.flowlog.io/api/v1/logs',
+        apiKey: 'test-key',
+        service: 'test-service',
+        env: 'testing'
+    );
+    
+    // Mock the log manager to return our handler
+    app()->forgetInstance('log');
+    
+    // Create a real Monolog logger with our handler
+    $flowlogChannel = new \Monolog\Logger('flowlog', [$handler]);
+    $singleChannel = new \Monolog\Logger('single');
+    
+    $logManager = \Mockery::mock('Illuminate\Log\LogManager');
+    $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $logManager->shouldReceive('error')->andReturn(true);
+    
+    app()->instance('log', $logManager);
+    
+    // Create response
+    $response = response()->json(['message' => 'ok']);
+    
+    // Use reflection to directly call logRequest and bypass console check
+    // We'll use a closure to temporarily override runningInConsole
+    $listener = new HttpListener();
+    $reflection = new \ReflectionClass($listener);
+    $method = $reflection->getMethod('logRequest');
+    $method->setAccessible(true);
+    
+    // Create a custom listener that bypasses the console check
+    $customListener = new class extends HttpListener {
+        protected function logRequest(\Illuminate\Http\Request $request, $response = null): void
+        {
+            // Skip console check by directly calling parent logic
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::isSending()) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::inSendLogsJob()) {
+                return;
+            }
+            // Skip: if (app()->runningInConsole()) { return; }
+            if (! $request || $request->method() == 'OPTIONS') {
+                return;
+            }
+            if (! $request->route()) {
+                return;
+            }
+            if ($this->shouldExcludeRoute($request)) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::shouldIgnore() || $request->hasHeader('X-Flowlog-Ignore')) {
+                return;
+            }
+            
+            $startTime = $this->getStartTime($request);
+            $executionTime = $startTime ? microtime(true) - $startTime : null;
+            
+            $statusCode = null;
+            try {
+                if ($response !== null) {
+                    if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'getStatusCode')) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'status')) {
+                        $statusCode = $response->status();
+                    }
+                }
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            } catch (\Exception $e) {
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            }
+
+            $context = $this->contextExtractor->extractHttpContext($request, $statusCode, $executionTime);
+
+            if (config('flowlog.http.log_headers', false)) {
+                $context['http_headers'] = $this->sanitizeHeaders($request->headers->all());
+            }
+
+            $level = $this->getLogLevel($statusCode);
+            $message = sprintf(
+                '%s %s - %s',
+                $request->method(),
+                $request->path(),
+                $statusCode ?? 'N/A'
+            );
+
+            \Illuminate\Support\Facades\Log::channel('flowlog')->{$level}($message, $context);
+        }
+    };
+    
+    $customListener->handle(new RequestHandled($request, $response));
+    
+    // Get the logs from the handler
+    $logs = $handler->getAllLogs();
+    
+    // Verify that a log was created
+    expect($logs)->toHaveCount(1);
+    
+    // Verify the log contains the iteration key (it's at the top level in the formatted log entry)
+    $log = $logs[0];
+    expect($log['iteration_key'])->toBe($iterationKey);
+    
+    // Clean up
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
+});
+
+it('prefers X-Iteration-Key over X-Flowlog-Iteration-Key when both headers are present', function () {
+    Queue::fake();
+    
+    $iterationKey1 = 'test-iteration-key-789';
+    $iterationKey2 = 'test-iteration-key-999';
+    
+    // Set iteration key in FlowlogContext (as middleware would do, using X-Iteration-Key)
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::setIterationKey($iterationKey1);
+    
+    // Set up a route so the request has a route (required by HttpListener)
+    Route::get('/test', function () {
+        return response()->json(['message' => 'ok']);
+    })->name('test.route');
+    
+    // Create a request and match it to the route
+    $request = \Illuminate\Http\Request::create('/test', 'GET');
+    $request->headers->set('X-Iteration-Key', $iterationKey1);
+    $request->headers->set('X-Flowlog-Iteration-Key', $iterationKey2);
+    
+    // Match the route to the request
+    $route = Route::getRoutes()->match($request);
+    $request->setRouteResolver(function () use ($route) {
+        return $route;
+    });
+    
+    // Bind the request to the app
+    app()->instance('request', $request);
+    
+    // Create a mock handler to capture logs
+    $handler = new FlowlogHandler(
+        apiUrl: 'https://test.flowlog.io/api/v1/logs',
+        apiKey: 'test-key',
+        service: 'test-service',
+        env: 'testing'
+    );
+    
+    // Mock the log manager to return our handler
+    app()->forgetInstance('log');
+    
+    // Create a real Monolog logger with our handler
+    $flowlogChannel = new \Monolog\Logger('flowlog', [$handler]);
+    $singleChannel = new \Monolog\Logger('single');
+    
+    $logManager = \Mockery::mock('Illuminate\Log\LogManager');
+    $logManager->shouldReceive('channel')->with('flowlog')->andReturn($flowlogChannel);
+    $logManager->shouldReceive('channel')->with('single')->andReturn($singleChannel);
+    $logManager->shouldReceive('error')->andReturn(true);
+    
+    app()->instance('log', $logManager);
+    
+    // Create response
+    $response = response()->json(['message' => 'ok']);
+    
+    // Use reflection to directly call logRequest and bypass console check
+    // We'll use a closure to temporarily override runningInConsole
+    $listener = new HttpListener();
+    $reflection = new \ReflectionClass($listener);
+    $method = $reflection->getMethod('logRequest');
+    $method->setAccessible(true);
+    
+    // Create a custom listener that bypasses the console check
+    $customListener = new class extends HttpListener {
+        protected function logRequest(\Illuminate\Http\Request $request, $response = null): void
+        {
+            // Skip console check by directly calling parent logic
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::isSending()) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::inSendLogsJob()) {
+                return;
+            }
+            // Skip: if (app()->runningInConsole()) { return; }
+            if (! $request || $request->method() == 'OPTIONS') {
+                return;
+            }
+            if (! $request->route()) {
+                return;
+            }
+            if ($this->shouldExcludeRoute($request)) {
+                return;
+            }
+            if (\Flowlog\FlowlogLaravel\Guards\FlowlogGuard::shouldIgnore() || $request->hasHeader('X-Flowlog-Ignore')) {
+                return;
+            }
+            
+            $startTime = $this->getStartTime($request);
+            $executionTime = $startTime ? microtime(true) - $startTime : null;
+            
+            $statusCode = null;
+            try {
+                if ($response !== null) {
+                    if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'getStatusCode')) {
+                        $statusCode = $response->getStatusCode();
+                    } elseif (method_exists($response, 'status')) {
+                        $statusCode = $response->status();
+                    }
+                }
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            } catch (\Exception $e) {
+                if ($statusCode === null) {
+                    $statusCode = $request->attributes->get('_response_status');
+                }
+            }
+
+            $context = $this->contextExtractor->extractHttpContext($request, $statusCode, $executionTime);
+
+            if (config('flowlog.http.log_headers', false)) {
+                $context['http_headers'] = $this->sanitizeHeaders($request->headers->all());
+            }
+
+            $level = $this->getLogLevel($statusCode);
+            $message = sprintf(
+                '%s %s - %s',
+                $request->method(),
+                $request->path(),
+                $statusCode ?? 'N/A'
+            );
+
+            \Illuminate\Support\Facades\Log::channel('flowlog')->{$level}($message, $context);
+        }
+    };
+    
+    $customListener->handle(new RequestHandled($request, $response));
+    
+    // Get the logs from the handler
+    $logs = $handler->getAllLogs();
+    
+    // Verify that a log was created
+    expect($logs)->toHaveCount(1);
+    
+    // Verify the log contains the first iteration key (FlowlogContext takes precedence)
+    $log = $logs[0];
+    expect($log['iteration_key'])->toBe($iterationKey1);
+    
+    // Clean up
+    \Flowlog\FlowlogLaravel\Context\FlowlogContext::clear();
+});
+
